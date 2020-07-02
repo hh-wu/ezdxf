@@ -4,7 +4,7 @@
 import pytest
 from math import isclose
 from ezdxf.math.bspline import BSpline, DBSpline
-from ezdxf.math.bspline import bspline_basis_vector, Basis, open_uniform_knot_vector
+from ezdxf.math.bspline import bspline_basis_vector, Basis, open_uniform_knot_vector, normalize_knots, subdivide_params
 
 DEFPOINTS = [(0.0, 0.0, 0.0), (10., 20., 20.), (30., 10., 25.), (40., 10., 25.), (50., 0., 30.)]
 
@@ -26,7 +26,7 @@ def test_bspline_basis_vector():
     count = 10
     knots = list(open_uniform_knot_vector(count, order=degree + 1))
     max_t = max(knots)
-    basis_func = Basis(knots=knots, order=degree+1, count=count)
+    basis_func = Basis(knots=knots, order=degree + 1, count=count)
     for u in (0, 2., 2.5, 3.5, 4., max_t):
         basis = bspline_basis_vector(u, count=count, degree=degree, knots=knots)
         basis2 = basis_func.basis(u)
@@ -57,6 +57,22 @@ def test_dbspline_points(dbspline):
         assert isclose(epz, rpz)
 
 
+def test_normalize_knots():
+    assert normalize_knots([0, 0.25, 0.5, 0.75, 1.0]) == [0, 0.25, 0.5, 0.75, 1.0]
+    assert normalize_knots([0, 1, 2, 3, 4]) == [0, 0.25, 0.5, 0.75, 1.0]
+    assert normalize_knots([2, 3, 4, 5, 6]) == [0, 0.25, 0.5, 0.75, 1.0]
+
+
+def test_normalize_knots_if_needed():
+    s = BSpline(
+        control_points=DEFPOINTS,
+        knots=[2, 2, 2, 2, 3, 6, 6, 6, 6],
+        order=4,
+    )
+    k = s.knots()
+    assert k[0] == 0.0
+
+
 def test_dbspline_derivative_1(dbspline):
     for rpoint, epoint in iter_data(dbspline, 1):
         epx, epy, epz = epoint
@@ -83,8 +99,45 @@ def test_bspline_insert_knot():
     assert len(bspline.control_points) == 9
 
 
-def test_basis_vector():
-    pass
+def test_transform_interface():
+    from ezdxf.math import Matrix44
+    spline = BSpline(control_points=[(1, 0, 0), (3, 3, 0), (6, 0, 1)], order=3)
+    spline.transform(Matrix44.translate(1, 2, 3))
+    assert spline.control_points[0] == (2, 2, 3)
+
+
+def test_bezier_decomposition():
+    bspline = BSpline.from_fit_points([(0, 0), (10, 20), (30, 10), (40, 10), (50, 0), (60, 20), (70, 50), (80, 70)])
+    bezier_segments = list(bspline.bezier_decomposition())
+    assert len(bezier_segments) == 5
+    # results visually checked to be correct
+    assert bezier_segments[0] == [
+        (0.0, 0.0, 0.0),
+        (2.02070813064438, 39.58989657555839, 0.0),
+        (14.645958536022286, 10.410103424441612, 0.0),
+        (30.0, 10.0, 0.0)
+    ]
+    assert bezier_segments[-1] == [
+        (60.0, 20.0, 0.0),
+        (66.33216513897267, 43.20202388489432, 0.0),
+        (69.54617236126121, 50.37880459351478, 0.0),
+        (80.0, 70.0, 0.0)
+    ]
+
+
+def test_cubic_bezier_approximation():
+    bspline = BSpline.from_fit_points([(0, 0), (10, 20), (30, 10), (40, 10), (50, 0), (60, 20), (70, 50), (80, 70)])
+    bezier_segments = list(bspline.cubic_bezier_approximation(level=3))
+    assert len(bezier_segments) == 28
+    bezier_segments = list(bspline.cubic_bezier_approximation(segments=40))
+    assert len(bezier_segments) == 40
+    # The interpolation is based on cubic_bezier_interpolation()
+    # and therefore the interpolation result is not topic of this test.
+
+
+def test_subdivide_params():
+    assert list(subdivide_params([0.0, 1.0])) == [0.0, 0.5, 1.0]
+    assert list(subdivide_params([0.0, 0.5, 1.0])) == [0.0, 0.25, 0.5, 0.75, 1.0]
 
 
 DBSPLINE = [
